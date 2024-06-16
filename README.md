@@ -1,5 +1,10 @@
 # IOQP -> RAAT
-An Impact Ordered Query Processor that supports Rank-at-a-Time retrieval!
+The aim of this project is to implement a Rank-at-a-Time (RaaT) algorithym. It is used in text search to return the top k results from a set of documents.
+
+## How to Install and Run
+Work in Progress. Doesn't do anything yet.
+
+# IOQP Information Below
 
 ## Credits
 
@@ -155,3 +160,4 @@ Query processing with query term weights:
     --k 1000 \
     --weighted
 ```
+
