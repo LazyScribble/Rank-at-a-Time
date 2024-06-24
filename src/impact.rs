@@ -1,10 +1,13 @@
 use crate::{compress, range};
 
+static mut ID_COUNT: u32 = 0;
+
 #[derive(Copy, Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct MetaData {
     pub impact: u16,
     pub count: u32,
     pub bytes: u32,
+    pub bid: u32,
 }
 
 #[derive(Debug)]
@@ -16,6 +19,7 @@ pub struct Impact {
 }
 
 impl Impact {
+
     #[must_use]
     pub fn count(&self) -> u32 {
         self.meta_data.count
@@ -48,6 +52,7 @@ impl Impact {
                 impact: meta_data.impact * query_weight,
                 count: meta_data.count,
                 bytes: meta_data.bytes,
+                bid: meta_data.bid
             },
             initial: 0,
             bytes,
@@ -80,9 +85,11 @@ impl Impact {
                 impact,
                 count: docs.len() as u32,
                 bytes: output.len() as u32,
+                bid: unsafe { ID_COUNT },
             },
             output,
-        )
+        );
+        unsafe { ID_COUNT = ID_COUNT + 1 };
     }
 
     pub fn next_large_chunk<'buf, 'index, Compressor: crate::compress::Compressor>(
