@@ -5,7 +5,7 @@ pub struct MetaData {
     pub impact: u16,
     pub count: u32,
     pub bytes: u32,
-    pub bid: u32,
+    pub token_id: i32,
 }
 
 #[derive(Debug)]
@@ -50,7 +50,7 @@ impl Impact {
                 impact: meta_data.impact * query_weight,
                 count: meta_data.count,
                 bytes: meta_data.bytes,
-                bid: meta_data.bid
+                token_id: meta_data.token_id
             },
             initial: 0,
             bytes,
@@ -83,7 +83,7 @@ impl Impact {
                 impact,
                 count: docs.len() as u32,
                 bytes: output.len() as u32,
-                bid: 0 as u32,
+                token_id: 0,
             },
             output,
         )

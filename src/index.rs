@@ -127,8 +127,14 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
             std::collections::HashMap::default();
         let mut list_data =
             Vec::with_capacity(encoded_data.iter().map(|(_, (_, data))| data.len()).sum());
+        
+        let mut tid:i32 = 0;            //Hopefully adds token_id when buiulding index here
         for (term, (mut list, term_data)) in encoded_data.into_iter().progress_with(pb_write) {
             list.start_byte_offset = list_data.len();
+            for metadata in list.impacts.iter_mut() {
+                metadata.token_id = tid;
+            }
+            tid += 1;      
             vocab.insert(term, list);
             list_data.extend_from_slice(&term_data);
         }
