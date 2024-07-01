@@ -15,6 +15,7 @@ use std::cmp::Reverse;
 
 use crate::ciff;
 use crate::impact;
+use crate::impact::Impact;
 use crate::list;
 use crate::query::{Term, MAX_TERM_WEIGHT};
 use crate::range::Byte;
@@ -249,6 +250,46 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
                 }
             })
             .sum::<u32>() as usize
+    }
+    
+    fn raat_determine_impact_segments(&self, data: &mut search::Scratch, tokens: &[Term]) -> usize {
+        // determine what to decompress
+        data.impacts.iter_mut().for_each(std::vec::Vec::clear);
+        tokens
+            .iter()
+            .filter_map(|tok| match self.impact_list(&tok.token) {
+                Some(list) => {
+                    let mut start = list.start_byte_offset;
+                    Some(
+                        list.impacts
+                            .iter()
+                            .map(|ti| {
+                                let stop = start + ti.bytes as usize;
+                                data.impacts[ti.token_id].push(
+                                    impact::Impact::from_encoded_slice_weighted(
+                                        *ti,
+                                        Byte::new(start, stop),
+                                        tok.freq as u16,
+                                    ),
+                                );
+                                start += ti.bytes as usize;
+                                ti.count
+                            })
+                            .sum::<u32>(),
+                    )
+                }
+                None => {
+                    tracing::warn!("unknown query token '{}'", tok);
+                    None
+                }
+            })
+            .sum::<u32>() as usize
+    }
+
+    fn raat_process_impact_segments(&self, data: &mut search::Scratch, mut postings_budget: i64) {
+        for impact_list in data.impacts.iter_mut() {
+            let first_impact: &Impact = &impact_list[0]; //Make sure largest is at top
+        }
     }
 
     fn process_impact_segments(&self, data: &mut search::Scratch, mut postings_budget: i64) {
