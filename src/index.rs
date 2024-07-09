@@ -132,9 +132,6 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         let mut tid:i32 = 0;            //Hopefully adds token_id when buiulding index here
         for (term, (mut list, term_data)) in encoded_data.into_iter().progress_with(pb_write) {
             list.start_byte_offset = list_data.len();
-            for metadata in list.impacts.iter_mut() {
-                metadata.token_id = tid;
-            }
             tid += 1;      
             vocab.insert(term, list);
             list_data.extend_from_slice(&term_data);
@@ -255,17 +252,19 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
     fn raat_determine_impact_segments(&self, data: &mut search::Scratch, tokens: &[Term]) -> usize {
         // determine what to decompress
         data.impacts.iter_mut().for_each(std::vec::Vec::clear);
+        let mut i: i32 = -1;
         tokens
             .iter()
             .filter_map(|tok| match self.impact_list(&tok.token) {
                 Some(list) => {
                     let mut start = list.start_byte_offset;
+                    i += 1;
                     Some(
                         list.impacts
                             .iter()
                             .map(|ti| {
                                 let stop = start + ti.bytes as usize;
-                                data.impacts[ti.token_id].push(
+                                data.impacts[i].push(
                                     impact::Impact::from_encoded_slice_weighted(
                                         *ti,
                                         Byte::new(start, stop),
@@ -287,9 +286,34 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
     }
 
     fn raat_process_impact_segments(&self, data: &mut search::Scratch, mut postings_budget: i64) {
-        for impact_list in data.impacts.iter_mut() {
-            let first_impact: &Impact = &impact_list[0]; //Make sure largest is at top
+
+         //Generate
+         //while loop
+
+        let impact_iter = data.impacts.iter_mut(); //Changed so that it doesnt flatten all token segments into one list
+        let accum = &mut data.accumulators;
+        accum.iter_mut().for_each(|x| *x = 0);
+
         }
+    }
+
+    fn interset(first: Vec<u16>, second: Vec<u16>) {
+        let mut answer: Vec<u16>;
+        let mut i: usize = 0;
+        let mut j: usize = 0;
+        while i < first.len() || j < second.len() {
+            let compare: u16 = first[i];
+            if second[j] == compare {
+                answer.push(compare);
+                i += 1;
+                j += 1;
+            } else if second[j] < compare {
+                j += 1;
+            } else {
+                i += 1;
+            }
+        }
+        return answer;
     }
 
     fn process_impact_segments(&self, data: &mut search::Scratch, mut postings_budget: i64) {
