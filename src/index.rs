@@ -16,6 +16,7 @@ use std::cmp::Reverse;
 use crate::ciff;
 use crate::impact;
 use crate::impact::Impact;
+use crate::impact::MetaData;
 use crate::list;
 use crate::query::{Term, MAX_TERM_WEIGHT};
 use crate::range::Byte;
@@ -38,6 +39,12 @@ pub struct Index<C: crate::compress::Compressor> {
     impact_type: std::marker::PhantomData<C>,
     #[serde(skip)]
     search_bufs: parking_lot::Mutex<Vec<search::Scratch>>,
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub struct Combinations {
+    pub impact: u16,
+    pub indexes: Vec<usize>,
 }
 
 impl<Compressor: crate::compress::Compressor> Index<Compressor> {
@@ -264,7 +271,7 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
                             .iter()
                             .map(|ti| {
                                 let stop = start + ti.bytes as usize;
-                                data.impacts[i].push(
+                                data.impacts[i as usize].push(
                                     impact::Impact::from_encoded_slice_weighted(
                                         *ti,
                                         Byte::new(start, stop),
@@ -284,21 +291,73 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
             })
             .sum::<u32>() as usize
     }
-
-    fn raat_process_impact_segments(&self, data: &mut search::Scratch, mut postings_budget: i64) {
-
-         //Generate
-         //while loop
-
-        let impact_iter = data.impacts.iter_mut(); //Changed so that it doesnt flatten all token segments into one list
-        let accum = &mut data.accumulators;
-        accum.iter_mut().for_each(|x| *x = 0);
-
+    
+    /**
+     * Helper function for RaaT proccessing.
+     * Generates all possible intersection combinations.
+     */
+    fn get_combinations(lists: &Vec<Vec<Impact>>) -> Vec<Combinations> {
+        //Add the blank Impact in
+        let index_list: Vec<usize> = vec![];
+        let answer = Self::recurve_combinations(0, lists, index_list, 0);
+        return answer;
+    }
+    
+    /**
+     * Recursive part of get_combinations.
+     * Goes through all the lists and gives back the list of Combinations.
+     * Did have a blank option but it messed with the order of the indexes. 
+     */
+    fn recurve_combinations(current_list: usize, lists: &Vec<Vec<Impact>>, index_list: Vec<usize>, 
+        current_impact: u16) -> Vec<Combinations> {
+        if current_list >= lists.len() - 1 { //At last list, if current_list > num lists -1 then theres a problem
+            let mut answer: Vec<Combinations> = vec![];
+            for index in 0..=lists[current_list].len() {
+                let mut new_index_list: Vec<usize> = vec![];
+                new_index_list.clone_from(&index_list);
+                let impact: u16;
+                impact = lists[current_list][index].impact();
+                new_index_list.push(index);
+                let combo = Combinations {
+                    impact: impact + current_impact,
+                    indexes: new_index_list,
+                };
+                answer.push(combo);
+            }
+            return answer;
+        } else {
+            let mut answer_list: Vec<Combinations> = vec![];
+            for index in 0..=lists[current_list].len() {
+                let mut new_index_list: Vec<usize> = vec![];
+                new_index_list.clone_from(&index_list);
+                let impact: u16;
+                impact = lists[current_list][index].impact();
+                new_index_list.push(index);
+                let mut answer = Self::recurve_combinations(current_list + 1, lists, 
+                    new_index_list, current_impact + impact);
+                answer_list.append(&mut answer);
+            }
+            return answer_list;
         }
     }
 
-    fn interset(first: Vec<u16>, second: Vec<u16>) {
-        let mut answer: Vec<u16>;
+    fn raat_process_impact_segments(&self, data: &mut search::Scratch, mut postings_budget: i64) {
+
+         //Generate - Need to check whether index is in bounds when extracting index for intersection
+         // If not it was the blank option
+        let mut combos = Self::get_combinations(&data.impacts);
+        combos.sort_by(|a, b| b.cmp(a));
+        
+
+
+        let accum = &mut data.accumulators;
+        accum.iter_mut().for_each(|x| *x = 0);
+
+        
+    }
+
+    fn interset(first: Vec<u16>, second: Vec<u16>) -> Vec<u16> {
+        let mut answer: Vec<u16> = vec![];
         let mut i: usize = 0;
         let mut j: usize = 0;
         while i < first.len() || j < second.len() {
