@@ -22,6 +22,7 @@ use crate::query::{Term, MAX_TERM_WEIGHT};
 use crate::range::Byte;
 use crate::score;
 use crate::search;
+use crate::search::Result;
 use crate::util;
 use crate::ScoreType;
 
@@ -310,7 +311,7 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
      */
     fn recurve_combinations(current_list: usize, lists: &Vec<Vec<Impact>>, index_list: Vec<usize>, 
         current_impact: u16) -> Vec<Combinations> {
-        if current_list >= lists.len() - 1 { //At last list, if current_list > num lists -1 then theres a problem
+        if current_list >= lists.len() - 1 { //At last list
             let mut answer: Vec<Combinations> = vec![];
             for index in 0..=lists[current_list].len() {
                 let mut new_index_list: Vec<usize> = vec![];
@@ -327,7 +328,7 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
             return answer;
         } else {
             let mut answer_list: Vec<Combinations> = vec![];
-            for index in 0..=lists[current_list].len() {
+            for index in 0..=lists[current_list].len() { //Added 'blank' option by extending index range by 1
                 let mut new_index_list: Vec<usize> = vec![];
                 new_index_list.clone_from(&index_list);
                 let impact: u16;
@@ -342,37 +343,80 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
     }
 
     fn raat_process_impact_segments(&self, data: &mut search::Scratch, mut postings_budget: i64) {
-
-         //Generate - Need to check whether index is in bounds when extracting index for intersection
-         // If not it was the blank option
+        //Generate all possible interesection and order by decreasing impact
         let mut combos = Self::get_combinations(&data.impacts);
         combos.sort_by(|a, b| b.cmp(a));
         
-
-
-        let accum = &mut data.accumulators;
-        accum.iter_mut().for_each(|x| *x = 0);
-
-        
-    }
-
-    fn interset(first: Vec<u16>, second: Vec<u16>) -> Vec<u16> {
-        let mut answer: Vec<u16> = vec![];
-        let mut i: usize = 0;
-        let mut j: usize = 0;
-        while i < first.len() || j < second.len() {
-            let compare: u16 = first[i];
-            if second[j] == compare {
-                answer.push(compare);
-                i += 1;
-                j += 1;
-            } else if second[j] < compare {
-                j += 1;
-            } else {
-                i += 1;
+        //Intersecting
+        let mut results: Vec<search::Result> = vec![];
+        for combo in combos {
+            let list = self.intersect(data, &combo);
+            for doc_id in list {
+                results.push(Result {
+                    doc_id: doc_id as u32,
+                    score: combo.impact,
+                })
             }
         }
-        return answer;
+        //Have list of results at the end ~ unsure what to do now
+    }
+
+    fn intersect(&self, data: &mut search::Scratch, combo: &Combinations) -> Vec<usize> {
+        let mut current_answer = vec![];
+        let mut i: usize = 0;
+        let impact_iter = data.impacts.iter_mut();
+        for (index, list) in combo.indexes.iter().zip(impact_iter) {
+            if *index < list.len() { //Check blank
+                if i == 0 {//Set up initial intersect list
+                    while let Some(chunk) = list[*index]
+                        .next_large_chunk::<Compressor>(&self.list_data, &mut data.large_decode_buf)
+                    {
+                        chunk.iter().cloned().for_each(|doc_id| {
+                            let doc_id = doc_id as usize;
+                            current_answer.push(doc_id);
+                        });
+                    }
+                    while let Some(chunk) = 
+                        list[*index].next_chunk::<Compressor>(&self.list_data, &mut data.decode_buf)
+                    {
+                        chunk.iter().cloned().for_each(|doc_id| {
+                            let doc_id = doc_id as usize;
+                            current_answer.push(doc_id);
+                        });
+                    }
+                } else { //intersect with current list
+                    let mut new_answer = vec![];
+                    while let Some(chunk) = list[*index]
+                        .next_large_chunk::<Compressor>(&self.list_data, &mut data.large_decode_buf)
+                    {
+                        chunk.iter().cloned().for_each(|doc_id| {
+                            let doc_id = doc_id as usize;
+                            if current_answer.contains(&doc_id) {
+                                new_answer.push(doc_id);
+                            }
+                        });
+                    }
+                    while let Some(chunk) = 
+                        list[*index].next_chunk::<Compressor>(&self.list_data, &mut data.decode_buf)
+                    {
+                        chunk.iter().cloned().for_each(|doc_id| {
+                            let doc_id = doc_id as usize;
+                            if current_answer.contains(&doc_id) {
+                                new_answer.push(doc_id);
+                            }
+                        });
+                    }
+                    if new_answer.is_empty() {
+                        return vec![];
+                    } else {
+                        current_answer = new_answer;
+                    }
+                }
+            }
+            i += 1;
+        }
+        
+        return current_answer;
     }
 
     fn process_impact_segments(&self, data: &mut search::Scratch, mut postings_budget: i64) {
