@@ -16,7 +16,6 @@ use std::cmp::Reverse;
 use crate::ciff;
 use crate::impact;
 use crate::impact::Impact;
-use crate::impact::MetaData;
 use crate::list;
 use crate::query::{Term, MAX_TERM_WEIGHT};
 use crate::range::Byte;
@@ -137,10 +136,8 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         let mut list_data =
             Vec::with_capacity(encoded_data.iter().map(|(_, (_, data))| data.len()).sum());
         
-        let mut tid:i32 = 0;            //Hopefully adds token_id when buiulding index here
         for (term, (mut list, term_data)) in encoded_data.into_iter().progress_with(pb_write) {
-            list.start_byte_offset = list_data.len();
-            tid += 1;      
+            list.start_byte_offset = list_data.len();    
             vocab.insert(term, list);
             list_data.extend_from_slice(&term_data);
         }
@@ -342,23 +339,30 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         }
     }
 
-    fn raat_process_impact_segments(&self, data: &mut search::Scratch, mut postings_budget: i64) {
+    fn raat_process_impact_segments(&self, data: &mut search::Scratch, mut postings_budget: i64, k: usize) -> Vec<Result> {
         //Generate all possible interesection and order by decreasing impact
         let mut combos = Self::get_combinations(&data.impacts);
         combos.sort_by(|a, b| b.cmp(a));
         
         //Intersecting
         let mut results: Vec<search::Result> = vec![];
+        let mut count: usize = 0; // tracts top k
         for combo in combos {
+            if postings_budget < 0 || count == k {
+                break;
+            }
             let list = self.intersect(data, &combo);
+            let num_postings = list.len() as i64;
+            count += list.len();
             for doc_id in list {
                 results.push(Result {
                     doc_id: doc_id as u32,
                     score: combo.impact,
                 })
             }
+            postings_budget -= num_postings;
         }
-        //Have list of results at the end ~ unsure what to do now
+        return results;
     }
 
     fn intersect(&self, data: &mut search::Scratch, combo: &Combinations) -> Vec<usize> {
@@ -546,6 +550,31 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         let postings_budget = (total_postings as f32 * rho).ceil() as i64;
         self.process_impact_segments(&mut search_buf, postings_budget);
         let topk = self.determine_topk_chunks(&mut search_buf, k);
+
+        self.search_bufs.lock().push(search_buf);
+        search::Results {
+            topk,
+            took: start.elapsed(),
+            qid: query_id.unwrap_or_default(),
+        }
+    }
+
+    pub fn raat_query_fraction(
+        &self,
+        tokens: &[Term],
+        rho: f32,
+        query_id: Option<usize>,
+        k: usize,
+    ) -> search::Results {
+        let start = std::time::Instant::now();
+
+        let mut search_buf = self.search_bufs.lock().pop().unwrap_or_else(|| {
+            search::Scratch::from_index(self.max_level, self.max_term_weight, self.max_doc_id)
+        });
+
+        let total_postings = self.raat_determine_impact_segments(&mut search_buf, tokens);
+        let postings_budget = (total_postings as f32 * rho).ceil() as i64;
+        let topk = self.raat_process_impact_segments(&mut search_buf, postings_budget, k);
 
         self.search_bufs.lock().push(search_buf);
         search::Results {
