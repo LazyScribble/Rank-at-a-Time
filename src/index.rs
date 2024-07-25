@@ -308,20 +308,13 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
      */
     fn recurve_combinations(current_list: usize, lists: &Vec<Vec<Impact>>, index_list: Vec<usize>, 
         current_impact: u16) -> Vec<Combinations> {
-        if current_list >= lists.len() - 1 { //At last list
+        if lists[current_list].len() <= 0 { //At last list
             let mut answer: Vec<Combinations> = vec![];
-            for index in 0..=lists[current_list].len() {
-                let mut new_index_list: Vec<usize> = vec![];
-                new_index_list.clone_from(&index_list);
-                let impact: u16;
-                impact = lists[current_list][index].impact();
-                new_index_list.push(index);
-                let combo = Combinations {
-                    impact: impact + current_impact,
-                    indexes: new_index_list,
-                };
-                answer.push(combo);
-            }
+            let combo = Combinations {
+                impact: current_impact,
+                indexes: index_list,
+            };
+            answer.push(combo);
             return answer;
         } else {
             let mut answer_list: Vec<Combinations> = vec![];
@@ -329,7 +322,11 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
                 let mut new_index_list: Vec<usize> = vec![];
                 new_index_list.clone_from(&index_list);
                 let impact: u16;
-                impact = lists[current_list][index].impact();
+                if index == lists[current_list].len() { //blank
+                    impact = 0
+                } else {
+                    impact = lists[current_list][index].impact();
+                }
                 new_index_list.push(index);
                 let mut answer = Self::recurve_combinations(current_list + 1, lists, 
                     new_index_list, current_impact + impact);
