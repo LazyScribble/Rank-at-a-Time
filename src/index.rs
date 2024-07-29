@@ -336,7 +336,7 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         }
     }
 
-    fn raat_process_impact_segments(&self, data: &mut search::Scratch, mut postings_budget: i64, k: usize) -> Vec<Result> {
+    fn raat_process_impact_segments(&self, data: &mut search::Scratch, k: usize) -> Vec<Result> {
         //Generate all possible interesection and order by decreasing impact
         let mut combos = Self::get_combinations(&data.impacts);
         combos.sort_by(|a, b| b.cmp(a));
@@ -345,11 +345,10 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         let mut results: Vec<search::Result> = vec![];
         let mut count: usize = 0; // tracts top k
         for combo in combos {
-            if postings_budget < 0 || count == k {
+            if count == k {
                 break;
             }
             let list = self.intersect(data, &combo);
-            let num_postings = list.len() as i64;
             count += list.len();
             for doc_id in list {
                 results.push(Result {
@@ -357,7 +356,6 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
                     score: combo.impact,
                 })
             }
-            postings_budget -= num_postings;
         }
         return results;
     }
@@ -570,8 +568,8 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         });
 
         let total_postings = self.raat_determine_impact_segments(&mut search_buf, tokens);
-        let postings_budget = (total_postings as f32 * rho).ceil() as i64;
-        let topk = self.raat_process_impact_segments(&mut search_buf, postings_budget, k);
+        let _postings_budget = (total_postings as f32 * rho).ceil() as i64;
+        let topk = self.raat_process_impact_segments(&mut search_buf, k);
 
         self.search_bufs.lock().push(search_buf);
         search::Results {
