@@ -383,6 +383,7 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
                             current_answer.push(doc_id);
                         });
                     }
+                    i += 1;
                 } else { //intersect with current list
                     let mut new_answer = vec![];
                     while let Some(chunk) = list[*index]
@@ -412,7 +413,6 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
                     }
                 }
             }
-            i += 1;
         }
         
         return current_answer;
