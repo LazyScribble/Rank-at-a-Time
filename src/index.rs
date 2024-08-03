@@ -14,6 +14,7 @@ use rayon::iter::ParallelIterator;
 use std::cmp::Reverse;
 
 use crate::ciff;
+use crate::compress;
 use crate::impact;
 use crate::impact::Impact;
 use crate::list;
@@ -343,68 +344,78 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         
         //Intersecting
         let mut results: Vec<search::Result> = vec![];
-        let mut count: usize = 0; // tracts top k
+        let mut store_id: HashMap<usize, Vec<usize>> = HashMap::new();
         for combo in combos {
-            if count == k {
-                break;
-            }
-            let list = self.intersect(data, &combo);
-            count += list.len();
+            let list = self.intersect(data, &combo, &mut store_id);
             for doc_id in list {
                 results.push(Result {
                     doc_id: doc_id as u32,
                     score: combo.impact,
-                })
+                });
+                if results.len() >= k { //Check top k
+                    return results
+                }
             }
         }
         return results;
     }
 
-    fn intersect(&self, data: &mut search::Scratch, combo: &Combinations) -> Vec<usize> {
+    fn extract_ids(&self, decode_buf: &mut compress::Buffer, large_decode_buf: &mut compress::LargeBuffer, 
+            list: &mut Vec<Impact>, index: usize) -> Vec<usize> {
         let mut current_answer = vec![];
-        let mut i: usize = 0;
+        while let Some(chunk) = list[index]
+            .next_large_chunk::<Compressor>(&self.list_data, large_decode_buf)
+        {
+            chunk.iter().cloned().for_each(|doc_id| {
+                let doc_id = doc_id as usize;
+                current_answer.push(doc_id);
+            });
+        }
+        while let Some(chunk) = 
+            list[index].next_chunk::<Compressor>(&self.list_data, decode_buf)
+        {
+            chunk.iter().cloned().for_each(|doc_id| {
+                let doc_id = doc_id as usize;
+                current_answer.push(doc_id);
+            });
+        }
+        return current_answer
+    }
+
+    fn intersect(&self, data: &mut search::Scratch, combo: &Combinations, store_id: &mut HashMap<usize, Vec<usize>>) -> Vec<usize> {
+        let mut current_answer: Vec<usize> = vec![];
+        let mut check_initial: usize = 0;
+        let mut index_modifier: usize = 0;
         let impact_iter = data.impacts.iter_mut();
         for (index, list) in combo.indexes.iter().zip(impact_iter) {
             if *index < list.len() { //Check blank
-                if i == 0 {//Set up initial intersect list
-                    while let Some(chunk) = list[*index]
-                        .next_large_chunk::<Compressor>(&self.list_data, &mut data.large_decode_buf)
-                    {
-                        chunk.iter().cloned().for_each(|doc_id| {
-                            let doc_id = doc_id as usize;
-                            current_answer.push(doc_id);
-                        });
+                let key = *index + index_modifier;
+                if check_initial == 0 {//Set up initial intersect list
+                    if store_id.contains_key(&key) {
+                        current_answer = store_id.get(&key).unwrap().to_vec();
+                    } else {
+                        let potential_answer = self.extract_ids(&mut data.decode_buf, &mut data.large_decode_buf, list, *index);
+                        store_id.insert(key, potential_answer);
+                        current_answer = store_id.get(&key).unwrap().to_vec();
                     }
-                    while let Some(chunk) = 
-                        list[*index].next_chunk::<Compressor>(&self.list_data, &mut data.decode_buf)
-                    {
-                        chunk.iter().cloned().for_each(|doc_id| {
-                            let doc_id = doc_id as usize;
-                            current_answer.push(doc_id);
-                        });
-                    }
-                    i += 1;
+                    check_initial += 1;
                 } else { //intersect with current list
                     let mut new_answer = vec![];
-                    while let Some(chunk) = list[*index]
-                        .next_large_chunk::<Compressor>(&self.list_data, &mut data.large_decode_buf)
-                    {
-                        chunk.iter().cloned().for_each(|doc_id| {
-                            let doc_id = doc_id as usize;
-                            if current_answer.contains(&doc_id) {
-                                new_answer.push(doc_id);
+                    if store_id.contains_key(&key) {
+                        let doc_ids = store_id.get(&key).unwrap();
+                        for id in  doc_ids {
+                            if current_answer.contains(id) {
+                                new_answer.push(id.clone());
                             }
-                        });
-                    }
-                    while let Some(chunk) = 
-                        list[*index].next_chunk::<Compressor>(&self.list_data, &mut data.decode_buf)
-                    {
-                        chunk.iter().cloned().for_each(|doc_id| {
-                            let doc_id = doc_id as usize;
-                            if current_answer.contains(&doc_id) {
-                                new_answer.push(doc_id);
+                        }
+                    } else {
+                        let potential_answer: Vec<usize> = self.extract_ids(&mut data.decode_buf, &mut data.large_decode_buf, list, *index);
+                        for id in potential_answer {
+                            if current_answer.contains(&id) {
+                                new_answer.push(id);
                             }
-                        });
+                        }
+
                     }
                     if new_answer.is_empty() {
                         return vec![];
@@ -413,6 +424,7 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
                     }
                 }
             }
+            index_modifier += list.len();
         }
         
         return current_answer;
