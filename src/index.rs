@@ -345,15 +345,19 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         //Intersecting
         let mut results: Vec<search::Result> = vec![];
         let mut store_id: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut id_set = HashSet::new();
         for combo in combos {
             let list = self.intersect(data, &combo, &mut store_id);
             for doc_id in list {
-                results.push(Result {
-                    doc_id: doc_id as u32,
-                    score: combo.impact,
-                });
-                if results.len() >= k { //Check top k
-                    return results
+                if !id_set.contains(&doc_id) {
+                    id_set.insert(doc_id);
+                    results.push(Result {
+                        doc_id: doc_id as u32,
+                        score: combo.impact,
+                    });
+                    if results.len() >= k { //Check top k
+                        return results
+                    }
                 }
             }
         }
