@@ -414,7 +414,9 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
                         }
                     } else {
                         let potential_answer: Vec<usize> = self.extract_ids(&mut data.decode_buf, &mut data.large_decode_buf, list, *index);
-                        for id in potential_answer {
+                        store_id.insert(key, potential_answer);
+                        let new_potential = store_id.get(&key).unwrap().to_vec();
+                        for id in new_potential {
                             if current_answer.contains(&id) {
                                 new_answer.push(id);
                             }
