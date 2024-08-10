@@ -16,6 +16,7 @@ pub struct Impact {
 }
 
 impl Impact {
+
     #[must_use]
     pub fn count(&self) -> u32 {
         self.meta_data.count

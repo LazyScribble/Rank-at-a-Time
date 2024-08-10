@@ -89,7 +89,7 @@ fn main() -> anyhow::Result<()> {
         QueryMode::Fraction(rho) => {
             for qry in qrys.iter().cycle().take(num_queries).progress_with(pb) {
                 let result =
-                    index.query_fraction(&qry.tokens, rho, Some(qry.id), usize::from(args.k));
+                    index.raat_query_fraction(&qry.tokens, rho, Some(qry.id), usize::from(args.k));
                 hist.push(result.took.as_micros() as u64);
                 result.to_trec_file(index.docmap(), &out_handle);
             }

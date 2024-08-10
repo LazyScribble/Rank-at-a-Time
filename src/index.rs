@@ -14,12 +14,15 @@ use rayon::iter::ParallelIterator;
 use std::cmp::Reverse;
 
 use crate::ciff;
+use crate::compress;
 use crate::impact;
+use crate::impact::Impact;
 use crate::list;
 use crate::query::{Term, MAX_TERM_WEIGHT};
 use crate::range::Byte;
 use crate::score;
 use crate::search;
+use crate::search::Result;
 use crate::util;
 use crate::ScoreType;
 
@@ -37,6 +40,12 @@ pub struct Index<C: crate::compress::Compressor> {
     impact_type: std::marker::PhantomData<C>,
     #[serde(skip)]
     search_bufs: parking_lot::Mutex<Vec<search::Scratch>>,
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub struct Combinations {
+    pub impact: u16,
+    pub indexes: Vec<usize>,
 }
 
 impl<Compressor: crate::compress::Compressor> Index<Compressor> {
@@ -127,8 +136,9 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
             std::collections::HashMap::default();
         let mut list_data =
             Vec::with_capacity(encoded_data.iter().map(|(_, (_, data))| data.len()).sum());
+        
         for (term, (mut list, term_data)) in encoded_data.into_iter().progress_with(pb_write) {
-            list.start_byte_offset = list_data.len();
+            list.start_byte_offset = list_data.len();    
             vocab.insert(term, list);
             list_data.extend_from_slice(&term_data);
         }
@@ -243,6 +253,185 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
                 }
             })
             .sum::<u32>() as usize
+    }
+    
+    fn raat_determine_impact_segments(&self, data: &mut search::Scratch, tokens: &[Term]) -> usize {
+        // determine what to decompress
+        data.impacts.iter_mut().for_each(std::vec::Vec::clear);
+        let mut i: i32 = -1;
+        tokens
+            .iter()
+            .filter_map(|tok| match self.impact_list(&tok.token) {
+                Some(list) => {
+                    let mut start = list.start_byte_offset;
+                    i += 1;
+                    Some(
+                        list.impacts
+                            .iter()
+                            .map(|ti| {
+                                let stop = start + ti.bytes as usize;
+                                data.impacts[i as usize].push(
+                                    impact::Impact::from_encoded_slice_weighted(
+                                        *ti,
+                                        Byte::new(start, stop),
+                                        tok.freq as u16,
+                                    ),
+                                );
+                                start += ti.bytes as usize;
+                                ti.count
+                            })
+                            .sum::<u32>(),
+                    )
+                }
+                None => {
+                    tracing::warn!("unknown query token '{}'", tok);
+                    None
+                }
+            })
+            .sum::<u32>() as usize
+    }
+    
+    /**
+     * Helper function for RaaT proccessing.
+     * Generates all possible intersection combinations.
+     */
+    fn get_combinations(lists: &Vec<Vec<Impact>>) -> Vec<Combinations> {
+        //Add the blank Impact in
+        let index_list: Vec<usize> = vec![];
+        let answer = Self::recurve_combinations(0, lists, index_list, 0);
+        return answer;
+    }
+    
+    /**
+     * Recursive part of get_combinations.
+     * Goes through all the lists and gives back the list of Combinations.
+     * Did have a blank option but it messed with the order of the indexes. 
+     */
+    fn recurve_combinations(current_list: usize, lists: &Vec<Vec<Impact>>, index_list: Vec<usize>, 
+        current_impact: u16) -> Vec<Combinations> {
+        if lists[current_list].len() <= 0 { //At last list
+            let mut answer: Vec<Combinations> = vec![];
+            let combo = Combinations {
+                impact: current_impact,
+                indexes: index_list,
+            };
+            answer.push(combo);
+            return answer;
+        } else {
+            let mut answer_list: Vec<Combinations> = vec![];
+            for index in 0..=lists[current_list].len() { //Added 'blank' option by extending index range by 1
+                let mut new_index_list: Vec<usize> = vec![];
+                new_index_list.clone_from(&index_list);
+                let impact: u16;
+                if index == lists[current_list].len() { //blank
+                    impact = 0
+                } else {
+                    impact = lists[current_list][index].impact();
+                }
+                new_index_list.push(index);
+                let mut answer = Self::recurve_combinations(current_list + 1, lists, 
+                    new_index_list, current_impact + impact);
+                answer_list.append(&mut answer);
+            }
+            return answer_list;
+        }
+    }
+
+    fn raat_process_impact_segments(&self, data: &mut search::Scratch, k: usize) -> Vec<Result> {
+        //Generate all possible interesection and order by decreasing impact
+        let mut combos = Self::get_combinations(&data.impacts);
+        combos.sort_by(|a, b| b.cmp(a));
+        
+        //Intersecting
+        let mut results: Vec<search::Result> = vec![];
+        let mut store_id: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut id_set = HashSet::new();
+        for combo in combos {
+            let list = self.intersect(data, &combo, &mut store_id);
+            for doc_id in list {
+                if !id_set.contains(&doc_id) {
+                    id_set.insert(doc_id);
+                    results.push(Result {
+                        doc_id: doc_id as u32,
+                        score: combo.impact,
+                    });
+                    if results.len() >= k { //Check top k
+                        return results
+                    }
+                }
+            }
+        }
+        return results;
+    }
+
+    fn extract_ids(&self, decode_buf: &mut compress::Buffer, large_decode_buf: &mut compress::LargeBuffer, 
+            list: &mut Vec<Impact>, index: usize) -> Vec<usize> {
+        let mut current_answer = vec![];
+        while let Some(chunk) = list[index]
+            .next_large_chunk::<Compressor>(&self.list_data, large_decode_buf)
+        {
+            chunk.iter().cloned().for_each(|doc_id| {
+                let doc_id = doc_id as usize;
+                current_answer.push(doc_id);
+            });
+        }
+        while let Some(chunk) = 
+            list[index].next_chunk::<Compressor>(&self.list_data, decode_buf)
+        {
+            chunk.iter().cloned().for_each(|doc_id| {
+                let doc_id = doc_id as usize;
+                current_answer.push(doc_id);
+            });
+        }
+        return current_answer
+    }
+
+    fn intersect(&self, data: &mut search::Scratch, combo: &Combinations, store_id: &mut HashMap<usize, Vec<usize>>) -> Vec<usize> {
+        let mut current_answer: Vec<usize> = vec![];
+        let mut check_initial: usize = 0;
+        let mut index_modifier: usize = 0;
+        let impact_iter = data.impacts.iter_mut();
+        for (index, list) in combo.indexes.iter().zip(impact_iter) {
+            if *index < list.len() { //Check blank
+                let key = *index + index_modifier;
+                if check_initial == 0 {//Set up initial intersect list
+                    if store_id.contains_key(&key) {
+                        current_answer = store_id.get(&key).unwrap().to_vec();
+                    } else {
+                        let potential_answer = self.extract_ids(&mut data.decode_buf, &mut data.large_decode_buf, list, *index);
+                        store_id.insert(key, potential_answer);
+                        current_answer = store_id.get(&key).unwrap().to_vec();
+                    }
+                    check_initial += 1;
+                } else { //intersect with current list
+                    let mut new_answer = vec![];
+                    if store_id.contains_key(&key) {
+                        let doc_ids = store_id.get(&key).unwrap();
+                        for id in  doc_ids {
+                            if current_answer.contains(id) {
+                                new_answer.push(id.clone());
+                            }
+                        }
+                    } else {
+                        let potential_answer: Vec<usize> = self.extract_ids(&mut data.decode_buf, &mut data.large_decode_buf, list, *index);
+                        for id in potential_answer {
+                            if current_answer.contains(&id) {
+                                new_answer.push(id);
+                            }
+                        }
+
+                    }
+                    if new_answer.is_empty() {
+                        return vec![];
+                    } else {
+                        current_answer = new_answer;
+                    }
+                }
+            }
+            index_modifier += list.len();
+        }
+        
+        return current_answer;
     }
 
     fn process_impact_segments(&self, data: &mut search::Scratch, mut postings_budget: i64) {
@@ -372,6 +561,31 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         let postings_budget = (total_postings as f32 * rho).ceil() as i64;
         self.process_impact_segments(&mut search_buf, postings_budget);
         let topk = self.determine_topk_chunks(&mut search_buf, k);
+
+        self.search_bufs.lock().push(search_buf);
+        search::Results {
+            topk,
+            took: start.elapsed(),
+            qid: query_id.unwrap_or_default(),
+        }
+    }
+
+    pub fn raat_query_fraction(
+        &self,
+        tokens: &[Term],
+        rho: f32,
+        query_id: Option<usize>,
+        k: usize,
+    ) -> search::Results {
+        let start = std::time::Instant::now();
+
+        let mut search_buf = self.search_bufs.lock().pop().unwrap_or_else(|| {
+            search::Scratch::from_index(self.max_level, self.max_term_weight, self.max_doc_id)
+        });
+
+        let total_postings = self.raat_determine_impact_segments(&mut search_buf, tokens);
+        let _postings_budget = (total_postings as f32 * rho).ceil() as i64;
+        let topk = self.raat_process_impact_segments(&mut search_buf, k);
 
         self.search_bufs.lock().push(search_buf);
         search::Results {
