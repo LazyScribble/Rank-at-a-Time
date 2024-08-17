@@ -16,3 +16,5 @@ data
 protoc
 robust
 test.trec
+combo*
+*time.csv
