@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::convert::TryFrom;
+use std::fs::OpenOptions;
 use std::hash::BuildHasherDefault;
 use tracing::info;
 use twox_hash::XxHash64;
@@ -12,6 +13,7 @@ use indicatif::ProgressIterator;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use std::cmp::Reverse;
+use std::io::Write;
 
 use crate::ciff;
 use crate::compress;
@@ -337,11 +339,27 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         }
     }
 
+    fn write_combo_data(combos: Vec<Combinations>, time: std::time::Instant) {
+        let first = &combos[0];
+        let max_impact = first.impact as usize;
+        let query_length = first.indexes.len();
+        let output = OpenOptions::new().read(true).write(true).append(true).create(true).open("sort_time.csv").expect("can not open output file");
+        writeln!(
+            &output,
+            "{},{}",
+            query_length,
+            time.elapsed().as_micros()
+        )
+        .unwrap();
+    }
+
     fn raat_process_impact_segments(&self, data: &mut search::Scratch, k: usize) -> Vec<Result> {
         //Generate all possible interesection and order by decreasing impact
         let mut combos = Self::get_combinations(&data.impacts);
+        let start = std::time::Instant::now();
         combos.sort_by(|a, b| b.cmp(a));
-        
+        Self::write_combo_data(combos, start);
+        return vec![];
         //Intersecting
         let mut results: Vec<search::Result> = vec![];
         let mut store_id: HashMap<usize, Vec<usize>> = HashMap::new();
