@@ -15,6 +15,6 @@ desires
 data
 protoc
 robust
-test.trec
+*.trec
 combo*
-*time.csv
+*.csv
