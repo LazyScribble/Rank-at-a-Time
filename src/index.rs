@@ -372,16 +372,15 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
     }
     
     fn gen_combo_ordered(&self, queue: &mut BinaryHeap<Combinations>, visited: &mut HashSet<Combinations>, 
-        data: &mut search::Scratch, results: &mut Vec<search::Result>, store_id: &mut Vec<Vec<usize>>, k: usize) {
+        data: &mut search::Scratch, results: &mut Vec<search::Result>, store_id: &mut Vec<Vec<usize>>, k: usize, length: usize) {
         if visited.is_empty() {
-            let start_indexes = vec![0 as usize; data.impacts.len()];
+            let start_indexes = vec![0 as usize; length];
             queue.push(Combinations {
                 impact: Self::get_total_impact(&start_indexes, &data.impacts),
                 indexes: start_indexes,
             });
         }
-        //let mut generated = vec![];
-        //let mut counter = 0;
+
         let mut id_set = HashSet::new();
         while !queue.is_empty() {
             let current = queue.pop().unwrap();
@@ -394,15 +393,11 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
                         score: current.impact,
                     });
                     if results.len() >= k { //Check top k
-                        //Self::write_combo_data(length, start);
                         return
                     }
                 }
             }
-            //counter += 1;
-            //if counter >= 10000 { //Check end early
-              //  return generated; 
-            //}
+
             let options = Self::get_next_combos(current, &data.impacts);
             for option in options {
                 if !visited.contains(&option) {
@@ -411,7 +406,6 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
                 }
             }
         }
-        //return generated;
     }
 
     fn write_combo_data(query_length: usize, time: std::time::Instant) {
@@ -429,6 +423,13 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         //Generate all possible interesection and order by decreasing impact
         //let mut combos = Self::get_combinations(&data.impacts);
         //combos.sort_by(|a, b| b.cmp(a));
+        let mut length: usize = 0;
+        for impact_list in data.impacts.iter() {
+            if !impact_list.is_empty() {
+                length += 1;
+            }
+        }
+        let start = std::time::Instant::now();
         let mut queue = BinaryHeap::new();
         let mut visited = HashSet::new();
         let mut results: Vec<search::Result> = vec![];
@@ -437,7 +438,8 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
             max_len += list.len() + 1;
         }
         let mut store_id: Vec<Vec<usize>> = vec![vec![]; max_len];
-        self.gen_combo_ordered(&mut queue, &mut visited, data, &mut results, &mut store_id, k);
+        self.gen_combo_ordered(&mut queue, &mut visited, data, &mut results, &mut store_id, k, length);
+        Self::write_combo_data(length, start);
         //Intersecting
         /* 
         let mut max_len = 0;
