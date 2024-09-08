@@ -429,7 +429,7 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
                 length += 1;
             }
         }
-        let start = std::time::Instant::now();
+        //let start = std::time::Instant::now();
         let mut queue = BinaryHeap::new();
         let mut visited = HashSet::new();
         let mut results: Vec<search::Result> = vec![];
@@ -439,7 +439,7 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         }
         let mut store_id: Vec<Vec<usize>> = vec![vec![]; max_len];
         self.gen_combo_ordered(&mut queue, &mut visited, data, &mut results, &mut store_id, k, length);
-        Self::write_combo_data(length, start);
+        //Self::write_combo_data(length, start);
         //Intersecting
         /* 
         let mut max_len = 0;
