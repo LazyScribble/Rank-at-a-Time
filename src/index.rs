@@ -421,15 +421,16 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
 
     fn raat_process_impact_segments(&self, data: &mut search::Scratch, k: usize) -> Vec<Result> {
         //Generate all possible interesection and order by decreasing impact
-        //let mut combos = Self::get_combinations(&data.impacts);
-        //combos.sort_by(|a, b| b.cmp(a));
+        let start = std::time::Instant::now();
+        let mut combos = Self::get_combinations(&data.impacts);
+        combos.sort_by(|a, b| b.cmp(a));
+        /*
         let mut length: usize = 0;
         for impact_list in data.impacts.iter() {
             if !impact_list.is_empty() {
                 length += 1;
             }
         }
-        //let start = std::time::Instant::now();
         let mut queue = BinaryHeap::new();
         let mut visited = HashSet::new();
         let mut results: Vec<search::Result> = vec![];
@@ -439,9 +440,9 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         }
         let mut store_id: Vec<Vec<usize>> = vec![vec![]; max_len];
         self.gen_combo_ordered(&mut queue, &mut visited, data, &mut results, &mut store_id, k, length);
+        */
         //Self::write_combo_data(length, start);
         //Intersecting
-        /* 
         let mut max_len = 0;
         for list in data.impacts.iter() {
             max_len += list.len() + 1;
@@ -460,13 +461,13 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
                         score: combo.impact,
                     });
                     if results.len() >= k { //Check top k
-                        //Self::write_combo_data(length, start);
+                        info!("{0},{1},{2}", combos[0].indexes.len(),combos[0].impact, start.elapsed().as_micros());
                         return results
                     }
                 }
             }
         }
-        //Self::write_combo_data(length, start);*/
+        info!("{0},{1},{2}", combos[0].indexes.len(),combos[0].impact, start.elapsed().as_micros());
         return results;
     }
 
