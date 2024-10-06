@@ -448,7 +448,10 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
             max_len += list.len() + 1;
         }
         
-        //let length = combos[0].indexes.len();
+        for list in data.impacts.iter() {
+            max_len += list.len() + 1;
+        }
+        let mut store_id: Vec<Vec<usize>> = vec![vec![]; max_len];
         let mut id_set = HashSet::new();
         //let start = std::time::Instant::now();
         for combo in combos {
