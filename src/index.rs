@@ -449,7 +449,6 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         }
         let mut store_id: Vec<Vec<usize>> = vec![vec![]; max_len];
         let mut id_set = HashSet::new();
-        let mut results: Vec<search::Result> = vec![];
         //let start = std::time::Instant::now();
         for combo in combos {
             let list = self.intersect(data, &combo, &mut store_id);
