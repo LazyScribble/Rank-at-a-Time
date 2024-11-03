@@ -2,7 +2,7 @@
 The aim of this project is to implement a Rank-at-a-Time (RaaT) algorithym. It is used in text search to return the top k results from a set of documents.
 
 ## How to Install and Run
-Work in Progress. Doesn't do anything yet.
+Simply download the repository and have rust installed. Then follow the same instructions used for IOQP with any reference to \IOQP replace with \Rank-at-a-Time.
 
 # IOQP Information Below
 
