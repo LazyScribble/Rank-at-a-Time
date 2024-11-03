@@ -1,8 +1,7 @@
 use rayon::iter::IntoParallelIterator;
-use std::collections::BTreeMap;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{BinaryHeap, HashSet, HashMap, BTreeMap};
 use std::convert::TryFrom;
+use std::fs::OpenOptions;
 use std::hash::BuildHasherDefault;
 use tracing::info;
 use twox_hash::XxHash64;
@@ -12,6 +11,7 @@ use indicatif::ProgressIterator;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use std::cmp::Reverse;
+use std::io::Write;
 
 use crate::ciff;
 use crate::compress;
@@ -42,7 +42,7 @@ pub struct Index<C: crate::compress::Compressor> {
     search_bufs: parking_lot::Mutex<Vec<search::Scratch>>,
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub struct Combinations {
     pub impact: u16,
     pub indexes: Vec<usize>,
@@ -337,15 +337,119 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         }
     }
 
+    fn get_total_impact(indexes: &Vec<usize>, impact_list: &Vec<Vec<Impact>>) -> u16 {
+        let mut impact: u16 = 0;
+        let mut counter: usize = 0;
+        for index in indexes {
+            if *index != impact_list[counter].len() { //Check blank
+                impact += impact_list[counter][*index].impact();
+            }
+            counter += 1;
+        }
+        return impact;
+    }
+    
+    fn get_next_combos(combo: Combinations, impact_list: &Vec<Vec<Impact>>) -> Vec<Combinations> {
+        let mut answer = vec![];
+        for index in 0..combo.indexes.len() {
+            if combo.indexes[index] != impact_list[index].len() { // Check haven't reached the end
+                let mut new_option = vec![];
+                for i in 0..combo.indexes.len() {
+                    if index == i {
+                        new_option.push(combo.indexes[i] + 1)
+                    } else {
+                        new_option.push(combo.indexes[i])
+                    }
+                }
+                let impact = Self::get_total_impact(&new_option, impact_list);
+                answer.push(Combinations {
+                    impact: impact,
+                    indexes: new_option,
+                });
+            }
+        }
+        return answer;
+    }
+    
+    fn gen_combo_ordered(&self, queue: &mut BinaryHeap<Combinations>, visited: &mut HashSet<Combinations>, 
+        data: &mut search::Scratch, results: &mut Vec<search::Result>, store_id: &mut Vec<Vec<usize>>, k: usize, length: usize) {
+        if visited.is_empty() {
+            let start_indexes = vec![0 as usize; length];
+            queue.push(Combinations {
+                impact: Self::get_total_impact(&start_indexes, &data.impacts),
+                indexes: start_indexes,
+            });
+        }
+
+        let mut id_set = HashSet::new();
+        while !queue.is_empty() {
+            let current = queue.pop().unwrap();
+            let doc_ids = self.intersect(data, &current, store_id);
+            for doc_id in doc_ids {
+                if !id_set.contains(&doc_id) {
+                    id_set.insert(doc_id);
+                    results.push(Result {
+                        doc_id: doc_id as u32,
+                        score: current.impact,
+                    });
+                    if results.len() >= k { //Check top k
+                        return
+                    }
+                }
+            }
+
+            let options = Self::get_next_combos(current, &data.impacts);
+            for option in options {
+                if !visited.contains(&option) {
+                    queue.push(option.clone());
+                    visited.insert(option);
+                }
+            }
+        }
+    }
+
+    fn write_combo_data(query_length: usize, time: std::time::Instant) {
+        let output = OpenOptions::new().read(true).write(true).append(true).create(true).open("intersect_time.csv").expect("can not open output file");
+        writeln!(
+            &output,
+            "{},{}",
+            query_length,
+            time.elapsed().as_micros()
+        )
+        .unwrap();
+    }
+
     fn raat_process_impact_segments(&self, data: &mut search::Scratch, k: usize) -> Vec<Result> {
         //Generate all possible interesection and order by decreasing impact
-        let mut combos = Self::get_combinations(&data.impacts);
-        combos.sort_by(|a, b| b.cmp(a));
-        
-        //Intersecting
+        //let mut combos = Self::get_combinations(&data.impacts);
+        //combos.sort_by(|a, b| b.cmp(a));
+        let mut length: usize = 0;
+        for impact_list in data.impacts.iter() {
+            if !impact_list.is_empty() {
+                length += 1;
+            }
+        }
+        //let start = std::time::Instant::now();
+        let mut queue = BinaryHeap::new();
+        let mut visited = HashSet::new();
         let mut results: Vec<search::Result> = vec![];
-        let mut store_id: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut max_len = 0;
+        for list in data.impacts.iter() {
+            max_len += list.len() + 1;
+        }
+        let mut store_id: Vec<Vec<usize>> = vec![vec![]; max_len];
+        self.gen_combo_ordered(&mut queue, &mut visited, data, &mut results, &mut store_id, k, length);
+        //Self::write_combo_data(length, start);
+        //Intersecting
+        /* 
+        let mut max_len = 0;
+        for list in data.impacts.iter() {
+            max_len += list.len() + 1;
+        }
+        
+        //let length = combos[0].indexes.len();
         let mut id_set = HashSet::new();
+        //let start = std::time::Instant::now();
         for combo in combos {
             let list = self.intersect(data, &combo, &mut store_id);
             for doc_id in list {
@@ -356,16 +460,18 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
                         score: combo.impact,
                     });
                     if results.len() >= k { //Check top k
+                        //Self::write_combo_data(length, start);
                         return results
                     }
                 }
             }
         }
+        //Self::write_combo_data(length, start);*/
         return results;
     }
 
     fn extract_ids(&self, decode_buf: &mut compress::Buffer, large_decode_buf: &mut compress::LargeBuffer, 
-            list: &mut Vec<Impact>, index: usize) -> Vec<usize> {
+            list: &mut Vec<Impact>, index: usize, key: usize, store_id: &mut Vec<Vec<usize>>) {
         let mut current_answer = vec![];
         while let Some(chunk) = list[index]
             .next_large_chunk::<Compressor>(&self.list_data, large_decode_buf)
@@ -383,54 +489,64 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
                 current_answer.push(doc_id);
             });
         }
-        return current_answer
+        store_id[key] = current_answer;
     }
 
-    fn intersect(&self, data: &mut search::Scratch, combo: &Combinations, store_id: &mut HashMap<usize, Vec<usize>>) -> Vec<usize> {
-        let mut current_answer: Vec<usize> = vec![];
-        let mut check_initial: usize = 0;
+    fn intersect(&self, data: &mut search::Scratch, combo: &Combinations, store_id: &mut Vec<Vec<usize>>) -> Vec<usize> {
+        let mut lists = vec![];
         let mut index_modifier: usize = 0;
         let impact_iter = data.impacts.iter_mut();
-        for (index, list) in combo.indexes.iter().zip(impact_iter) {
-            if *index < list.len() { //Check blank
+        let mut current_answer: Vec<usize> = vec![];
+        let mut current_list;
+        // Retrieve lists
+        for (index, impact) in combo.indexes.iter().zip(impact_iter) {
+            if *index < impact.len() { //Check blank
                 let key = *index + index_modifier;
-                if check_initial == 0 {//Set up initial intersect list
-                    if store_id.contains_key(&key) {
-                        current_answer = store_id.get(&key).unwrap().to_vec();
-                    } else {
-                        let potential_answer = self.extract_ids(&mut data.decode_buf, &mut data.large_decode_buf, list, *index);
-                        store_id.insert(key, potential_answer);
-                        current_answer = store_id.get(&key).unwrap().to_vec();
-                    }
-                    check_initial += 1;
-                } else { //intersect with current list
-                    let mut new_answer = vec![];
-                    if store_id.contains_key(&key) {
-                        let doc_ids = store_id.get(&key).unwrap();
-                        for id in  doc_ids {
-                            if current_answer.contains(id) {
-                                new_answer.push(id.clone());
-                            }
-                        }
-                    } else {
-                        let potential_answer: Vec<usize> = self.extract_ids(&mut data.decode_buf, &mut data.large_decode_buf, list, *index);
-                        for id in potential_answer {
-                            if current_answer.contains(&id) {
-                                new_answer.push(id);
-                            }
-                        }
-
-                    }
-                    if new_answer.is_empty() {
-                        return vec![];
-                    } else {
-                        current_answer = new_answer;
-                    }
+                if store_id[key].len() != 0 { //Already unpacked
+                    current_list = store_id[key].clone();
+                    lists.push(current_list);
+                } else { //Needs unpack
+                    self.extract_ids(&mut data.decode_buf, &mut data.large_decode_buf, impact, *index, key, store_id);
+                    current_list = store_id[key].clone();
+                    lists.push(current_list);
+                } //Determine shortest list
+            }
+            index_modifier += impact.len();
+        }
+        if lists.len() == 0 {
+            return current_answer;
+        }
+        //Intersect
+        let mut proceed = true;
+        let shortest_list = lists.pop().unwrap(); //Changed so its not the shortest
+        let mut pointers: Vec<usize> = vec![0 as usize; lists.len()];
+        let mut short_index: usize = 0;
+        while proceed {
+            let mut add = true;
+            let mut increment = true;
+            for i in 0..lists.len() {
+                let list = &lists[i];
+                let pointer = pointers[i];
+                if pointer >= list.len() {
+                    return current_answer;
+                } else if list[pointer] < shortest_list[short_index] {
+                    pointers[i] = pointer + 1;
+                    add = false;
+                    increment = false;
+                } else if list[pointer] > shortest_list[short_index] {
+                    add = false;
                 }
             }
-            index_modifier += list.len();
+            if add {
+                current_answer.push(shortest_list[short_index])
+            }
+            if increment {
+                short_index += 1;
+            }
+            if short_index >= shortest_list.len() {
+                proceed = false;
+            }
         }
-        
         return current_answer;
     }
 
