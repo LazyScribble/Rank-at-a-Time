@@ -450,8 +450,6 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         let mut store_id: Vec<Vec<usize>> = vec![vec![]; max_len];
         let mut id_set = HashSet::new();
         let mut results: Vec<search::Result> = vec![];
-        let q_length = combos[0].indexes.len();
-        let max_impact = combos[0].impact;
         //let start = std::time::Instant::now();
         for combo in combos {
             let list = self.intersect(data, &combo, &mut store_id);
@@ -469,7 +467,7 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
                 }
             }
         }
-        info!("{0},{1},{2}", q_length,max_impact, start.elapsed().as_micros());
+        info!("{0},{1},{2}", combos[0].indexes.len(),combos[0].impact, start.elapsed().as_micros());
         return results;
     }
 
