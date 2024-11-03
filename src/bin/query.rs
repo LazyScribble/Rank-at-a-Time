@@ -111,7 +111,6 @@ fn main() -> anyhow::Result<()> {
     hist.sort_unstable();
     let n = hist.len() as f32;
     let total_time = hist.iter().sum::<u64>();
-    /*
     println!("# of samples: {}", hist.len());
     println!("  50'th percntl.: {}µs", hist[(n * 0.5) as usize]);
     println!("  90'th percntl.: {}µs", hist[(n * 0.9) as usize]);
@@ -119,6 +118,6 @@ fn main() -> anyhow::Result<()> {
     println!("99.9'th percntl.: {}µs", hist[(n * 0.999) as usize]);
     println!("            max.: {}µs", hist.last().unwrap());
     println!("       mean time: {:.1}µs", total_time as f32 / n);
-    */
+
     Ok(())
 }
