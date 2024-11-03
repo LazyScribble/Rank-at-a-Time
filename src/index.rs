@@ -447,6 +447,10 @@ impl<Compressor: crate::compress::Compressor> Index<Compressor> {
         for list in data.impacts.iter() {
             max_len += list.len() + 1;
         }
+        
+        for list in data.impacts.iter() {
+            max_len += list.len() + 1;
+        }
         let mut store_id: Vec<Vec<usize>> = vec![vec![]; max_len];
         let mut id_set = HashSet::new();
         //let start = std::time::Instant::now();
